@@ -1,4 +1,5 @@
 const fs = require('fs');
+const { randomUUID } = require('crypto');
 require('dotenv').config();
 
 if (!process.env.OZOW_ACCESS_TOKEN || !process.env.OZOW_API_KEY) {
@@ -20,7 +21,7 @@ const API_KEY = process.env.OZOW_API_KEY || '';
 
 const makeBasePayload = () => {
   return {
-    payoutId: '00000000-0000-0000-0000-000000000000',
+    payoutId: randomUUID(),
     siteCode: process.env.OZOW_SITE_CODE || 'TEST_SITE',
     merchantReference: '123',
     customerMerchantReference: '123',

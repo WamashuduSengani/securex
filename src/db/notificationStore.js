@@ -1,4 +1,4 @@
-const { Pool } = require('pg');
+const { PrismaClient } = require('@prisma/client');
 
 const createInMemoryNotificationStore = () => {
   const processedEvents = new Set();
@@ -22,14 +22,11 @@ const createInMemoryNotificationStore = () => {
   };
 };
 
-const createPostgresNotificationStore = (connectionString, sslEnabled) => {
-  const pool = new Pool({
-    connectionString,
-    ssl: sslEnabled ? { rejectUnauthorized: false } : undefined,
-  });
+const createPrismaNotificationStore = () => {
+  const prisma = new PrismaClient();
 
   const initialize = async () => {
-    await pool.query(`
+    await prisma.$executeRawUnsafe(`
       CREATE TABLE IF NOT EXISTS processed_webhook_events (
         event_key TEXT PRIMARY KEY,
         payout_id TEXT NOT NULL,
@@ -39,7 +36,7 @@ const createPostgresNotificationStore = (connectionString, sslEnabled) => {
       )
     `);
 
-    await pool.query(`
+    await prisma.$executeRawUnsafe(`
       CREATE TABLE IF NOT EXISTS payout_notifications (
         id BIGSERIAL PRIMARY KEY,
         event_key TEXT,
@@ -57,7 +54,7 @@ const createPostgresNotificationStore = (connectionString, sslEnabled) => {
       )
     `);
 
-    await pool.query(`
+    await prisma.$executeRawUnsafe(`
       CREATE TABLE IF NOT EXISTS payouts (
         payout_id TEXT PRIMARY KEY,
         site_code TEXT,
@@ -71,7 +68,7 @@ const createPostgresNotificationStore = (connectionString, sslEnabled) => {
       )
     `);
 
-    await pool.query(
+    await prisma.$executeRawUnsafe(
       'CREATE INDEX IF NOT EXISTS idx_payout_notifications_payout_id ON payout_notifications (payout_id)'
     );
   };
@@ -84,102 +81,72 @@ const createPostgresNotificationStore = (connectionString, sslEnabled) => {
     hashValid,
     reason,
   }) => {
-    const client = await pool.connect();
+    const payoutId = payload.payoutId || 'unknown';
 
-    try {
-      await client.query('BEGIN');
-
+    const result = await prisma.$transaction(async (tx) => {
       let duplicate = false;
 
       if (hashValid) {
-        const dedupeResult = await client.query(
-          `
-            INSERT INTO processed_webhook_events (event_key, payout_id, status, sub_status)
-            VALUES ($1, $2, $3, $4)
-            ON CONFLICT (event_key) DO NOTHING
-            RETURNING event_key
-          `,
-          [eventKey, payload.payoutId, status, subStatus]
-        );
+        const inserted = await tx.processedWebhookEvent.createMany({
+          data: [
+            {
+              eventKey,
+              payoutId,
+              status,
+              subStatus,
+            },
+          ],
+          skipDuplicates: true,
+        });
 
-        duplicate = dedupeResult.rowCount === 0;
+        duplicate = inserted.count === 0;
       }
 
-      await client.query(
-        `
-          INSERT INTO payout_notifications (
-            event_key,
-            payout_id,
-            site_code,
-            merchant_reference,
-            customer_merchant_reference,
-            status,
-            sub_status,
-            hash_valid,
-            duplicate,
-            reason,
-            raw_payload
-          )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb)
-        `,
-        [
+      await tx.payoutNotification.create({
+        data: {
           eventKey,
-          payload.payoutId,
-          payload.siteCode || null,
-          payload.merchantReference || null,
-          payload.customerMerchantReference || null,
+          payoutId,
+          siteCode: payload.siteCode || null,
+          merchantReference: payload.merchantReference || null,
+          customerMerchantReference: payload.customerMerchantReference || null,
           status,
           subStatus,
           hashValid,
           duplicate,
-          reason || null,
-          JSON.stringify(payload),
-        ]
-      );
+          reason: reason || null,
+          rawPayload: payload,
+        },
+      });
 
-      if (hashValid && !duplicate) {
-        await client.query(
-          `
-            INSERT INTO payouts (
-              payout_id,
-              site_code,
-              merchant_reference,
-              customer_merchant_reference,
-              last_status,
-              last_sub_status,
-              last_notification_at,
-              updated_at
-            )
-            VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
-            ON CONFLICT (payout_id)
-            DO UPDATE SET
-              site_code = EXCLUDED.site_code,
-              merchant_reference = EXCLUDED.merchant_reference,
-              customer_merchant_reference = EXCLUDED.customer_merchant_reference,
-              last_status = EXCLUDED.last_status,
-              last_sub_status = EXCLUDED.last_sub_status,
-              last_notification_at = NOW(),
-              updated_at = NOW()
-          `,
-          [
-            payload.payoutId,
-            payload.siteCode || null,
-            payload.merchantReference || null,
-            payload.customerMerchantReference || null,
-            status,
-            subStatus,
-          ]
-        );
+      if (hashValid && !duplicate && payload.payoutId) {
+        await tx.payout.upsert({
+          where: {
+            payoutId: payload.payoutId,
+          },
+          create: {
+            payoutId: payload.payoutId,
+            siteCode: payload.siteCode || null,
+            merchantReference: payload.merchantReference || null,
+            customerMerchantReference: payload.customerMerchantReference || null,
+            lastStatus: status,
+            lastSubStatus: subStatus,
+            lastNotificationAt: new Date(),
+          },
+          update: {
+            siteCode: payload.siteCode || null,
+            merchantReference: payload.merchantReference || null,
+            customerMerchantReference: payload.customerMerchantReference || null,
+            lastStatus: status,
+            lastSubStatus: subStatus,
+            lastNotificationAt: new Date(),
+          },
+        });
       }
 
-      await client.query('COMMIT');
       return { duplicate };
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
+
+    return result;
   };
 
   return {
@@ -194,9 +161,8 @@ const createNotificationStoreFromEnv = () => {
     return { store: createInMemoryNotificationStore(), usesDatabase: false };
   }
 
-  const sslEnabled = process.env.DATABASE_SSL === 'true';
   return {
-    store: createPostgresNotificationStore(connectionString, sslEnabled),
+    store: createPrismaNotificationStore(),
     usesDatabase: true,
   };
 };
