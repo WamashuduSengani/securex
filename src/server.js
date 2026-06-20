@@ -22,7 +22,7 @@ const createApp = (config) => {
     const expectedToken = config.ozowAccessToken.trim();
 
     if (!expectedToken || normalizedToken !== expectedToken) {
-      return res.status(401).json({ error: 'Unauthorized webhook call' });
+      return res.status(401).json({ error: 'Unauthorized' });
     }
 
     if (!config.ozowApiKey) {
@@ -47,7 +47,7 @@ const createApp = (config) => {
     const expectedToken = config.ozowAccessToken.trim();
 
     if (!expectedToken || normalizedToken !== expectedToken) {
-      return res.status(401).json({ error: 'Unauthorized webhook call' });
+      return res.status(401).json({ error: 'Unauthorized' });
     }
 
     if (!config.ozowApiKey) {
