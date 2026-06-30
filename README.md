@@ -52,9 +52,9 @@ When `DATABASE_URL` is not set, the app falls back to in-memory notification ded
 
 | Field | Value |
 |---|---|
-| Notification URL | `https://<your-domain>/securex/payout-notification` |
-| Verification URL | `https://<your-domain>/securex/payout-verify` |
-| Access Token | `YOUR ACCESS TOKEN` |
+| Notification URL | `https://securex-btit.onrender.com/securex/payout-notification` |
+| Verification URL | `https://securex-btit.onrender.com/securex/payout-verify` |
+| Access Token | `ACCESS TOKEN` |
 
 The Access Token is a static 24-character string used by Ozow when calling your webhooks.
 
@@ -169,7 +169,4 @@ The script sends:
 ```bash
 PORT=3100 npm run start
 OZOW_VERIFY_WEBHOOK_URL='http://localhost:3100/securex/payout-verify' npm run test:payout-verify
-```
-
-## Next step: wire up your database
-Both handlers have `TODO` comments showing exactly where to add your DB calls.
+``
